@@ -10,7 +10,7 @@ import (
 func main() {
 	// Listen for incoming connections
 	listener, err := net.Listen("tcp", "localhost:8080")
-	db := redis.NewDB()
+	r := redis.NewRedis()
 	if err != nil {
 		fmt.Println("Error:", err)
 		return
@@ -28,6 +28,6 @@ func main() {
 		}
 
 		// Handle client connection in a goroutine
-		go redis.HandleClient(conn, db)
+		go redis.HandleClient(conn, r)
 	}
 }
