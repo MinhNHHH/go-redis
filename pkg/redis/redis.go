@@ -92,3 +92,43 @@ func (r *Redis) LPop(key string) (string, error) {
 	}
 	return "", fmt.Errorf("key not found")
 }
+
+// UpdateData merges the data from another Redis instance into the current instance.
+// It acquires locks on both the current and new instances to ensure thread safety during the merge operation.
+func (r *Redis) UpdateData(new *Redis) {
+	// Acquire locks on both instances to prevent concurrent modification
+	r.mu.Lock()
+	new.mu.Lock()
+	defer r.mu.Unlock()
+	defer new.mu.Unlock()
+	// Merge string data
+	for k, v := range new.strings {
+		r.strings[k] = v
+	}
+
+	for k, v := range new.lists {
+		r.lists[k] = v
+	}
+}
+
+// DeleteData removes keys from the current Redis instance that are not present in another Redis instance.
+// It acquires locks on both the current and new instances to ensure thread safety during the deletion operation.
+func (r *Redis) DeleteData(new *Redis) {
+	// Acquire locks on both instances to prevent concurrent modification
+	r.mu.Lock()
+	new.mu.Lock()
+	defer r.mu.Unlock()
+	defer new.mu.Unlock()
+
+	for key := range r.strings {
+		if _, exists := new.strings[key]; !exists {
+			delete(r.strings, key)
+		}
+	}
+
+	for key := range r.lists {
+		if _, exists := new.lists[key]; !exists {
+			delete(r.lists, key)
+		}
+	}
+}
