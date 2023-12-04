@@ -18,85 +18,95 @@ func HandleClient(conn net.Conn, r *Redis) {
 	// Perform a transaction on each Redis instance in the slice
 	redis := []*Redis{r}
 	for scanner.Scan() {
-		args := strings.Split(scanner.Text(), " ")
-		// if len(args) < 2 {
-		// 	return "", fmt.Errorf("error command")
-		// }
+		args := strings.Split(strings.Trim(scanner.Text(), " "), " ")
+
 		switch strings.ToLower(args[0]) {
 		case "get":
 			if len(args) != 2 {
-				returnResponse(conn, "", fmt.Errorf("get command requires exactly one argument"))
+				sendBackToClient(conn, "", fmt.Errorf("get command requires exactly one argument"))
+				continue
 			}
 			key := args[1]
 			result, err := handleGet(key, redis)
 			if err != nil {
-				returnResponse(conn, "", err)
+				sendBackToClient(conn, "", err)
 			}
-			returnResponse(conn, result, nil)
+			sendBackToClient(conn, result, nil)
 
 		case "set":
 			if len(args) < 3 {
-				returnResponse(conn, "", fmt.Errorf("set command requires at least two arguments"))
+				sendBackToClient(conn, "", fmt.Errorf("set command requires at least two arguments"))
+				continue
 			}
-			key, value, _ := args[1], args[2], args[3]
 
-			handleSet(key, value, 0, redis)
-			returnResponse(conn, "OK", nil)
+			key, value := args[1], args[2]
+			if len(args) == 5 && strings.ToLower(args[3]) == "ex" {
+				ttl, _ := strconv.ParseInt(args[4], 10, 64)
+				handleSet(key, value, time.Duration(ttl), redis)
+			} else {
+				handleSet(key, value, 0, redis)
+			}
+
+			sendBackToClient(conn, "OK", nil)
 
 		case "delete":
 			if len(args) != 2 {
-				returnResponse(conn, "", fmt.Errorf("delete command requires exactly one argument"))
+				sendBackToClient(conn, "", fmt.Errorf("delete command requires exactly one argument"))
+				continue
 			}
 			key := args[1]
 			handleDel(key, redis)
-			returnResponse(conn, "OK", nil)
+			sendBackToClient(conn, "OK", nil)
 
 		case "lpush":
 			if len(args) < 3 {
-				returnResponse(conn, "", fmt.Errorf("lpush command requires at least two arguments"))
+				sendBackToClient(conn, "", fmt.Errorf("lpush command requires at least two arguments"))
+				continue
 			}
 			key, value := args[1], args[2]
 			handleLPush(key, value, redis)
-			returnResponse(conn, "OK", nil)
+			sendBackToClient(conn, "OK", nil)
 
 		case "lrange":
 			if len(args) < 4 {
-				returnResponse(conn, "", fmt.Errorf("lrange command requires exactly one argument"))
+				sendBackToClient(conn, "", fmt.Errorf("lrange command requires exactly one argument"))
+				continue
 			}
 			key := args[1]
 			startStr, stopStr := args[2], args[3]
 
 			start, err := strconv.Atoi(startStr)
 			if err != nil {
-				returnResponse(conn, "", err)
+				sendBackToClient(conn, "", err)
 			}
 
 			stop, err := strconv.Atoi(stopStr)
 			if err != nil {
-				returnResponse(conn, "", err)
+				sendBackToClient(conn, "", err)
 			}
 
 			result, err := handleLRange(key, start, stop, redis)
 			if err != nil {
-				returnResponse(conn, "", err)
+				sendBackToClient(conn, "", err)
 			}
-			returnResponse(conn, result, nil)
+			sendBackToClient(conn, result, nil)
 		case "lpop":
 			if len(args) != 2 {
-				returnResponse(conn, "", fmt.Errorf("lpop command requires exactly one argument"))
+				sendBackToClient(conn, "", fmt.Errorf("lpop command requires exactly one argument"))
+				continue
 			}
 			key := args[1]
 			result, err := handleLPop(key, redis)
 			if err != nil {
-				returnResponse(conn, "", err)
+				sendBackToClient(conn, "", err)
 			}
-			returnResponse(conn, result, nil)
+			sendBackToClient(conn, result, nil)
 		case "begin":
 			// BEGIN command: Start a new transaction
 			transaction := NewRedis()
 			transaction.UpdateData(currentRedis(redis))
 			redis = append(redis, transaction) // append the new transaction to the existing slice
-			returnResponse(conn, "Transaction started", nil)
+			sendBackToClient(conn, "Transaction started", nil)
 		case "commit":
 			// COMMIT command: Commit the changes made during the transaction
 			if len(redis) >= 2 {
@@ -106,19 +116,16 @@ func HandleClient(conn net.Conn, r *Redis) {
 				originalTransaction.UpdateData(currentTransaction)
 				// Delete keys in originalTransaction that are not present in currentTransaction
 				originalTransaction.DeleteData(currentTransaction)
-				returnResponse(conn, "Transaction stoped", nil)
+				redis = redis[:len(redis)-1]
+				sendBackToClient(conn, "Transaction stoped", nil)
 			}
 		default:
-			returnResponse(conn, "", fmt.Errorf("unknown command"))
+			sendBackToClient(conn, "", fmt.Errorf("unknown command"))
 		}
 	}
 }
 
-func usePrecise(dur time.Duration) bool {
-	return dur < time.Second || dur%time.Second != 0
-}
-
-func returnResponse(conn net.Conn, res string, err error) {
+func sendBackToClient(conn net.Conn, res string, err error) {
 	if err != nil {
 		conn.Write([]byte(err.Error() + "\n"))
 	} else {
