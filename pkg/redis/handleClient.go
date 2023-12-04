@@ -6,6 +6,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // HandleClient handles the incoming client connection.
@@ -37,8 +38,9 @@ func HandleClient(conn net.Conn, r *Redis) {
 			if len(args) < 3 {
 				returnResponse(conn, "", fmt.Errorf("set command requires at least two arguments"))
 			}
-			key, value := args[1], args[2]
-			handleSet(key, value, redis)
+			key, value, _ := args[1], args[2], args[3]
+
+			handleSet(key, value, 0, redis)
 			returnResponse(conn, "OK", nil)
 
 		case "delete":
@@ -112,6 +114,10 @@ func HandleClient(conn net.Conn, r *Redis) {
 	}
 }
 
+func usePrecise(dur time.Duration) bool {
+	return dur < time.Second || dur%time.Second != 0
+}
+
 func returnResponse(conn net.Conn, res string, err error) {
 	if err != nil {
 		conn.Write([]byte(err.Error() + "\n"))
@@ -138,9 +144,9 @@ func handleGet(key string, redis []*Redis) (string, error) {
 	return result, nil
 }
 
-func handleSet(key, value string, redis []*Redis) error {
+func handleSet(key, value string, expiration time.Duration, redis []*Redis) error {
 	r := currentRedis(redis)
-	return r.Set(key, value)
+	return r.Set(key, value, expiration*time.Second)
 }
 
 func handleDel(key string, redis []*Redis) error {
