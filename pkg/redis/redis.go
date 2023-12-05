@@ -38,7 +38,6 @@ func (r *Redis) Get(key string) (string, error) {
 	defer r.cacheMux.Unlock()
 
 	cachedItem, exist := r.cache[key]
-	fmt.Println(cachedItem)
 	if exist && cachedItem.expiration.After(time.Now()) {
 		return cachedItem.value, nil
 	}
@@ -59,10 +58,21 @@ func (r *Redis) Set(key, val string, expiration time.Duration) error {
 	defer r.cacheMux.Unlock()
 
 	if expiration > 0 {
-		r.cache[key] = cacheItem{value: val, expiration: time.Now().Add((expiration))}
+		r.cache[key] = cacheItem{value: val, expiration: time.Now().Add(expiration)}
 	} else {
 		r.strings[key] = val
 	}
+	return nil
+}
+
+func (r *Redis) SetEx(key, val string, expiration time.Duration) error {
+	r.mu.Lock()
+	r.cacheMux.Lock()
+	// Lock so only one goroutine at a time can access the map c.v.
+	defer r.mu.Unlock()
+	defer r.cacheMux.Unlock()
+	r.cache[key] = cacheItem{value: val, expiration: time.Now().Add(expiration)}
+	delete(r.strings, key)
 	return nil
 }
 
@@ -74,6 +84,7 @@ func (r *Redis) Del(key string) error {
 	return nil
 }
 
+//--------------------------------------------------------------------------------------------
 func (r *Redis) LPush(key, value string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -120,6 +131,7 @@ func (r *Redis) LPop(key string) (string, error) {
 	return "", fmt.Errorf("key not found")
 }
 
+//--------------------------------------------------------------------------------------------
 // UpdateData merges the data from another Redis instance into the current instance.
 // It acquires locks on both the current and new instances to ensure thread safety during the merge operation.
 func (r *Redis) UpdateData(new *Redis) {
