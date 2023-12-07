@@ -38,15 +38,17 @@ func handleSet(args []string, redis []*Redis) (string, error) {
 	if len(args) == 5 && strings.ToLower(args[3]) == "ex" {
 		ttl, _ := strconv.ParseInt(args[4], 10, 64)
 		r.Set(key, value, time.Duration(ttl)*time.Second)
-	} else {
+	} else if len(args) == 3 {
 		r.Set(key, value, time.Duration(0)*time.Second)
+	} else {
+		return "", fmt.Errorf("syntax error")
 	}
 	return "OK", nil
 }
 
 func handleSetEx(args []string, redis []*Redis) (string, error) {
 	if len(args) < 4 {
-		return "", fmt.Errorf("set command requires at least three arguments")
+		return "", fmt.Errorf("setex command requires at least three arguments")
 	}
 	ttl, _ := strconv.ParseInt(args[3], 10, 64)
 	key, value := args[1], args[2]
