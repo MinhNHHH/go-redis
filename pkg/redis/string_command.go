@@ -64,7 +64,7 @@ func handleDel(args []string, redis []*Redis) (string, error) {
 	if len(args) != 2 {
 		return "", fmt.Errorf("delete command requires exactly one argument")
 	}
-	key := args[1]
+	key := args[1] //
 	r := currentRedis(redis)
 	r.Del(key)
 	return "OK", nil
