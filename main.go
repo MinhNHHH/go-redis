@@ -9,7 +9,7 @@ import (
 
 func main() {
 	// Listen for incoming connections
-	listener, err := net.Listen("tcp", "localhost:8080")
+	listener, err := net.Listen("tcp", "localhost:6789")
 	r := redis.NewRedis()
 	if err != nil {
 		fmt.Println("Error:", err)
@@ -17,7 +17,7 @@ func main() {
 	}
 	defer listener.Close()
 
-	fmt.Println("Server is listening on port 8080")
+	fmt.Println("Server is listening on port 6789")
 
 	for {
 		// Accept incoming connections
