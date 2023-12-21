@@ -6,73 +6,77 @@ import (
 	"time"
 )
 
-type cacheItem struct {
-	value      string
+type ExpirationItem struct {
+	value      interface{}
 	expiration time.Time
 }
 
 // DB represents a simple in-memory database.
 type Redis struct {
-	strings  map[string]string   // Data types Strings
-	lists    map[string][]string // Data types Lists
-	cache    map[string]cacheItem
-	mu       sync.Mutex // make sure only one goroutine can access a variable at a time to avoid conflicts
-	cacheMux sync.Mutex
+	items map[string]ExpirationItem
+	mu    sync.Mutex // make sure only one goroutine can access a variable at a time to avoid conflicts
 }
 
 // NewRedis creates and returns a new instance of the DB.
 func NewRedis() *Redis {
 	return &Redis{
-		strings: map[string]string{},
-		lists:   map[string][]string{},
-		cache:   map[string]cacheItem{},
+		items: map[string]ExpirationItem{},
 	}
 }
 
 // Get retrieves the value associated with a key in the strings database.
 func (r *Redis) Get(key string) (string, error) {
 	r.mu.Lock()
-	r.cacheMux.Lock()
 	// Lock so only one goroutine at a time can access the map c.v.
 	defer r.mu.Unlock()
-	defer r.cacheMux.Unlock()
-
-	cachedItem, exist := r.cache[key]
-	if exist && cachedItem.expiration.After(time.Now()) {
-		return cachedItem.value, nil
+	if item, exist := r.items[key]; exist {
+		if _, checkType := item.value.(string); checkType {
+			if exist && item.expiration.After(time.Now()) {
+				return item.value.(string), nil
+			} else if item.expiration.IsZero() && exist {
+				return item.value.(string), nil
+			}
+			delete(r.items, key)
+		} else {
+			// This error describe key existed in this database but command get key error
+			return "", fmt.Errorf("wrongtype operation against a key holding the wrong kind of value")
+		}
 	}
-	delete(r.cache, key)
 
-	if val, ok := r.strings[key]; ok {
-		return val, nil
-	}
 	return "", fmt.Errorf("key not found")
 }
 
 // Set adds or updates a string value in the database.
 func (r *Redis) Set(key, val string, expiration time.Duration) error {
 	r.mu.Lock()
-	r.cacheMux.Lock()
 	// Lock so only one goroutine at a time can access the map c.v.
 	defer r.mu.Unlock()
-	defer r.cacheMux.Unlock()
+	if item, exist := r.items[key]; exist {
+		if _, ok := item.value.(string); !ok {
+			// This error describe key existed in this database but command get key error
+			return fmt.Errorf("wrongtype operation against a key holding the wrong kind of value")
+		}
+	}
 
 	if expiration > 0 {
-		r.cache[key] = cacheItem{value: val, expiration: time.Now().Add(expiration)}
+		r.items[key] = ExpirationItem{value: val, expiration: time.Now().Add(expiration)}
 	} else {
-		r.strings[key] = val
+		r.items[key] = ExpirationItem{value: val}
 	}
 	return nil
 }
 
 func (r *Redis) SetEx(key, val string, expiration time.Duration) error {
 	r.mu.Lock()
-	r.cacheMux.Lock()
 	// Lock so only one goroutine at a time can access the map c.v.
 	defer r.mu.Unlock()
-	defer r.cacheMux.Unlock()
-	r.cache[key] = cacheItem{value: val, expiration: time.Now().Add(expiration)}
-	delete(r.strings, key)
+	if item, exist := r.items[key]; exist {
+		if _, ok := item.value.(string); !ok {
+			// This error describe key existed in this database but command get key error
+			return fmt.Errorf("wrongtype operation against a key holding the wrong kind of value")
+		}
+	}
+	r.items[key] = ExpirationItem{value: val, expiration: time.Now().Add(expiration)}
 	return nil
 }
 
@@ -80,7 +84,7 @@ func (r *Redis) SetEx(key, val string, expiration time.Duration) error {
 func (r *Redis) Del(key string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	delete(r.strings, key)
+	delete(r.items, key)
 	return nil
 }
 
@@ -88,30 +92,47 @@ func (r *Redis) Del(key string) error {
 func (r *Redis) LPush(key, value string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.lists[key] = append(r.lists[key], value)
+	// Check if the underlying type is []string
+	// Update the value and assign it back to the interface field
+	if item, ok := r.items[key]; ok {
+		if strList, checkType := item.value.([]string); checkType {
+			strList = append(strList, value)
+			r.items[key] = ExpirationItem{value: strList}
+		} else {
+			// This error describe key existed in this database but command get key error
+			return fmt.Errorf("wrongtype operation against a key holding the wrong kind of value")
+		}
+	} else {
+		strList := []string{value}
+		r.items[key] = ExpirationItem{value: strList}
+	}
+	// Handle the case where the key doesn't exist
 	return nil
 }
 
 func (r *Redis) LRange(key string, start int, stop int) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if item, oke := r.items[key]; oke {
+		if _, checkType := item.value.([]string); checkType {
+			if start < 0 || start > len(item.value.([]string)) {
+				return "", fmt.Errorf("lists startIndex out of range")
+			}
 
-	if val, oke := r.lists[key]; oke {
-
-		if start < 0 || start > len(val) {
-			return "", fmt.Errorf("lists startIndex out of range")
+			if stop > len(item.value.([]string)) {
+				return "", fmt.Errorf("lists stopIndex out of range")
+			}
+			// if stop = -1 is the last element, stop = -2 is the penultimate element of the list, and so forth.
+			if stop < 0 {
+				stop = len(item.value.([]string)) + stop + 1
+			}
+			// If len(val) + stop + 1 < 0 => it should be return error.
+			justString := fmt.Sprint(item.value.([]string)[start:stop])
+			return justString, nil
+		} else {
+			// This error describe key existed in this database but command get key error
+			return "", fmt.Errorf("wrongtype operation against a key holding the wrong kind of value")
 		}
-
-		if stop > len(val) {
-			return "", fmt.Errorf("lists stopIndex out of range")
-		}
-		// if stop = -1 is the last element, stop = -2 is the penultimate element of the list, and so forth.
-		if stop < 0 {
-			stop = len(val) + stop + 1
-		}
-		// If len(val) + stop + 1 < 0 => it should be return error.
-		justString := fmt.Sprint(val[start:stop])
-		return justString, nil
 	}
 	return "", fmt.Errorf("key not found")
 }
@@ -119,14 +140,19 @@ func (r *Redis) LRange(key string, start int, stop int) (string, error) {
 func (r *Redis) LPop(key string) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if val, ok := r.lists[key]; ok {
-		element := val[len(val)-1]
-		if len(val) > 1 {
-			r.lists[key] = val[:len(val)-1]
+	if item, ok := r.items[key]; ok {
+		if _, checkType := item.value.([]string); checkType {
+			element := item.value.([]string)[len(item.value.([]string))-1]
+			if len(item.value.([]string)) > 1 {
+				r.items[key] = ExpirationItem{value: item.value.([]string)[:len(item.value.([]string))-1]}
+			} else {
+				r.items[key] = ExpirationItem{value: []string{}}
+			}
+			return element, nil
 		} else {
-			r.lists[key] = []string{}
+			// This error describe key existed in this database but command get key error
+			return "", fmt.Errorf("wrongtype operation against a key holding the wrong kind of value")
 		}
-		return element, nil
 	}
 	return "", fmt.Errorf("key not found")
 }
@@ -137,25 +163,12 @@ func (r *Redis) LPop(key string) (string, error) {
 func (r *Redis) UpdateData(new *Redis) {
 	// Acquire locks on both instances to prevent concurrent modification
 	r.mu.Lock()
-	r.cacheMux.Lock()
-	new.mu.Lock()
 	defer r.mu.Unlock()
-	defer r.cacheMux.Unlock()
-	defer new.mu.Unlock()
 
 	// Merge string data
-	for k, v := range new.strings {
-		r.strings[k] = v
+	for k, v := range new.items {
+		r.items[k] = v
 	}
-	// Merge lists data
-	for k, v := range new.lists {
-		r.lists[k] = v
-	}
-	// Merge cache data
-	for k, v := range new.cache {
-		r.cache[k] = v
-	}
-
 }
 
 // DeleteData removes keys from the current Redis instance that are not present in another Redis instance.
@@ -163,27 +176,11 @@ func (r *Redis) UpdateData(new *Redis) {
 func (r *Redis) DeleteData(new *Redis) {
 	// Acquire locks on both instances to prevent concurrent modification
 	r.mu.Lock()
-	r.cacheMux.Lock()
-	new.mu.Lock()
 	defer r.mu.Unlock()
-	defer r.cacheMux.Unlock()
-	defer new.mu.Unlock()
 
-	for key := range r.strings {
-		if _, exists := new.strings[key]; !exists {
-			delete(r.strings, key)
+	for key := range r.items {
+		if _, exists := new.items[key]; !exists {
+			delete(r.items, key)
 		}
 	}
-
-	for key := range r.lists {
-		if _, exists := new.lists[key]; !exists {
-			delete(r.lists, key)
-		}
-	}
-	for key := range new.cache {
-		if _, exists := new.cache[key]; !exists {
-			delete(r.cache, key)
-		}
-	}
-
 }
