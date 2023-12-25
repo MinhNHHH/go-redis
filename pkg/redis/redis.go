@@ -13,20 +13,20 @@ type ExpirationItem struct {
 }
 
 // DB represents a simple in-memory database.
-type Redis struct {
+type Store struct {
 	items map[string]ExpirationItem
 	mu    sync.Mutex // make sure only one goroutine can access a variable at a time to avoid conflicts
 }
 
-// NewRedis creates and returns a new instance of the DB.
-func NewRedis() *Redis {
-	return &Redis{
+// NewStore creates and returns a new instance of the DB.
+func NewStore() *Store {
+	return &Store{
 		items: map[string]ExpirationItem{},
 	}
 }
 
 // Get retrieves the value associated with a key in the strings database.
-func (r *Redis) Get(key string) (string, error) {
+func (r *Store) Get(key string) (string, error) {
 	r.mu.Lock()
 	// Lock so only one goroutine at a time can access the map c.v.
 	defer r.mu.Unlock()
@@ -42,7 +42,7 @@ func (r *Redis) Get(key string) (string, error) {
 }
 
 // Set adds or updates a string value in the database.
-func (r *Redis) Set(key, val string, expiration time.Duration) error {
+func (r *Store) Set(key, val string, expiration time.Duration) error {
 	r.mu.Lock()
 	// Lock so only one goroutine at a time can access the map c.v.
 	defer r.mu.Unlock()
@@ -54,7 +54,7 @@ func (r *Redis) Set(key, val string, expiration time.Duration) error {
 	return nil
 }
 
-func (r *Redis) SetEx(key, val string, expiration time.Duration) error {
+func (r *Store) SetEx(key, val string, expiration time.Duration) error {
 	r.mu.Lock()
 	// Lock so only one goroutine at a time can access the map c.v.
 	defer r.mu.Unlock()
@@ -63,14 +63,14 @@ func (r *Redis) SetEx(key, val string, expiration time.Duration) error {
 }
 
 // Delete a key in the database
-func (r *Redis) Del(key string) error {
+func (r *Store) Del(key string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.items, key)
 	return nil
 }
 
-func (r *Redis) Incre(key string) error {
+func (r *Store) Incre(key string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -88,7 +88,7 @@ func (r *Redis) Incre(key string) error {
 	return nil
 }
 
-func (r *Redis) IncreBy(key, value string) error {
+func (r *Store) IncreBy(key, value string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -110,8 +110,49 @@ func (r *Redis) IncreBy(key, value string) error {
 	return nil
 }
 
+func (r *Store) Decre(key string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if item, exist := r.items[key]; exist {
+		decrNumber, err := strconv.Atoi(item.value.(string))
+		if err != nil {
+			return err
+		}
+		decrNumber -= 1
+		value := strconv.Itoa(decrNumber)
+		r.items[key] = ExpirationItem{value: value}
+	} else {
+		r.items[key] = ExpirationItem{value: "-1"}
+	}
+	return nil
+}
+
+func (r *Store) DecreBy(key, value string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if item, exist := r.items[key]; exist {
+		decrNumber, err := strconv.Atoi(item.value.(string))
+		if err != nil {
+			return err
+		}
+		valueIncred, err := strconv.Atoi(value)
+		if err != nil {
+			return err
+		}
+		decrNumber -= valueIncred
+		value := strconv.Itoa(decrNumber)
+		r.items[key] = ExpirationItem{value: value}
+	} else {
+		value = "-" + value
+		r.items[key] = ExpirationItem{value: value}
+	}
+	return nil
+}
+
 // --------------------------------------------------------------------------------------------
-func (r *Redis) LPush(key, value string) error {
+func (r *Store) LPush(key, value string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	// Check if the underlying type is []string
@@ -129,7 +170,7 @@ func (r *Redis) LPush(key, value string) error {
 	return nil
 }
 
-func (r *Redis) LRange(key string, start int, stop int) (string, error) {
+func (r *Store) LRange(key string, start int, stop int) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if item, oke := r.items[key]; oke {
@@ -153,7 +194,7 @@ func (r *Redis) LRange(key string, start int, stop int) (string, error) {
 	return "", fmt.Errorf("key not found")
 }
 
-func (r *Redis) LPop(key string) (string, error) {
+func (r *Store) LPop(key string) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if item, ok := r.items[key]; ok {
@@ -171,9 +212,9 @@ func (r *Redis) LPop(key string) (string, error) {
 }
 
 // --------------------------------------------------------------------------------------------
-// UpdateData merges the data from another Redis instance into the current instance.
+// UpdateData merges the data from another Store instance into the current instance.
 // It acquires locks on both the current and new instances to ensure thread safety during the merge operation.
-func (r *Redis) UpdateData(new *Redis) {
+func (r *Store) UpdateData(new *Store) {
 	// Acquire locks on both instances to prevent concurrent modification
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -184,9 +225,9 @@ func (r *Redis) UpdateData(new *Redis) {
 	}
 }
 
-// DeleteData removes keys from the current Redis instance that are not present in another Redis instance.
+// DeleteData removes keys from the current Store instance that are not present in another Store instance.
 // It acquires locks on both the current and new instances to ensure thread safety during the deletion operation.
-func (r *Redis) DeleteData(new *Redis) {
+func (r *Store) DeleteData(new *Store) {
 	// Acquire locks on both instances to prevent concurrent modification
 	r.mu.Lock()
 	defer r.mu.Unlock()

@@ -20,6 +20,8 @@ const (
 	getSetCommand       CommandType = "getset"
 	increCommand        CommandType = "incr"
 	increByCommand      CommandType = "incrby"
+	decrCommand         CommandType = "decr"
+	decrByCommand       CommandType = "decrby"
 	deleteCommand       CommandType = "del"
 	strLengthCommand    CommandType = "strlen"
 	setAndExpireCommand CommandType = "setex"
@@ -30,18 +32,18 @@ const (
 
 type Client struct {
 	conn  net.Conn
-	redis []*Redis
+	redis []*Store
 }
 
 // HandleClient handles the incoming client connection.
 // It reads commands from the client, processes them, and sends responses back to the client.
-func HandleClient(conn net.Conn, r *Redis) {
-	client := &Client{conn: conn, redis: []*Redis{r}}
+func HandleClient(conn net.Conn, r *Store) {
+	client := &Client{conn: conn, redis: []*Store{r}}
 	defer client.conn.Close()
 
 	scanner := bufio.NewScanner(conn)
-	// Initialize the Redis slice with the original Redis instance
-	// Perform a transaction on each Redis instance in the slice
+	// Initialize the Store slice with the original Store instance
+	// Perform a transaction on each Store instance in the slice
 	for scanner.Scan() {
 		client.handleCommand(scanner.Text())
 	}
@@ -89,6 +91,16 @@ func (client *Client) handleCommand(command string) {
 		}
 	case increByCommand:
 		_, err := handleIncreBy(args, client.redis)
+		if err != nil {
+			sendBackToClient(client.conn, err.Error())
+		}
+	case decrCommand:
+		_, err := handleDecre(args, client.redis)
+		if err != nil {
+			sendBackToClient(client.conn, err.Error())
+		}
+	case decrByCommand:
+		_, err := handleDecreBy(args, client.redis)
 		if err != nil {
 			sendBackToClient(client.conn, err.Error())
 		}
@@ -143,25 +155,25 @@ func sendBackToClient(conn net.Conn, message string) {
 	conn.Write([]byte(message + "\n"))
 }
 
-// currentRedis returns the last Redis instance in the provided slice.
+// currentStore returns the last Store instance in the provided slice.
 // If the slice is empty, it returns nil.
-func currentRedis(redis []*Redis) *Redis {
+func currentStore(redis []*Store) *Store {
 	if len(redis) >= 1 {
 		return redis[len(redis)-1]
 	}
 	return nil
 }
 
-func handleMulti(redis []*Redis) []*Redis {
-	transaction := NewRedis()
-	transaction.UpdateData(currentRedis(redis))
+func handleMulti(redis []*Store) []*Store {
+	transaction := NewStore()
+	transaction.UpdateData(currentStore(redis))
 	redis = append(redis, transaction)
 	return redis
 }
 
-func handleExec(redis []*Redis) ([]*Redis, error) {
+func handleExec(redis []*Store) ([]*Store, error) {
 	if len(redis) >= 2 {
-		currentTransaction := currentRedis(redis)
+		currentTransaction := currentStore(redis)
 		originalTransaction := redis[len(redis)-2]
 		// Update originalTransaction with the values from currentTransaction
 		originalTransaction.UpdateData(currentTransaction)
@@ -173,19 +185,19 @@ func handleExec(redis []*Redis) ([]*Redis, error) {
 	return redis, fmt.Errorf("exec without multi")
 }
 
-func handleDiscard(redis []*Redis) ([]*Redis, error) {
+func handleDiscard(redis []*Store) ([]*Store, error) {
 	if len(redis) >= 2 {
 		return redis[:len(redis)-1], nil
 	}
 	return redis, fmt.Errorf("discard without multi")
 }
 
-func handleGet(args []string, redis []*Redis) (string, error) {
+func handleGet(args []string, redis []*Store) (string, error) {
 	if len(args) != 2 {
 		return "", fmt.Errorf("get command requires exactly one argument")
 	}
 	key := args[1]
-	r := currentRedis(redis)
+	r := currentStore(redis)
 
 	if item, exist := r.items[key]; exist {
 		if _, ok := item.value.(string); !ok {
@@ -201,12 +213,12 @@ func handleGet(args []string, redis []*Redis) (string, error) {
 	return result, nil
 }
 
-func handleSet(args []string, redis []*Redis) (string, error) {
+func handleSet(args []string, redis []*Store) (string, error) {
 	if len(args) < 3 {
 		return "", fmt.Errorf("set command requires at least two arguments")
 	}
 	key, value := args[1], args[2]
-	r := currentRedis(redis)
+	r := currentStore(redis)
 	var ttl int
 
 	if len(args) == 5 && strings.EqualFold(args[3], "ex") {
@@ -235,7 +247,7 @@ func handleSet(args []string, redis []*Redis) (string, error) {
 	return "", nil
 }
 
-func handleSetEx(args []string, redis []*Redis) (string, error) {
+func handleSetEx(args []string, redis []*Store) (string, error) {
 	if len(args) < 4 {
 		return "", fmt.Errorf("setex command requires at least three arguments")
 	}
@@ -244,7 +256,7 @@ func handleSetEx(args []string, redis []*Redis) (string, error) {
 	if ttl < 1 {
 		return "", fmt.Errorf("invalid expire time in 'setex' command")
 	}
-	r := currentRedis(redis)
+	r := currentStore(redis)
 
 	if item, exist := r.items[key]; exist {
 		if _, ok := item.value.(string); !ok {
@@ -260,22 +272,22 @@ func handleSetEx(args []string, redis []*Redis) (string, error) {
 	return "", nil
 }
 
-func handleDel(args []string, redis []*Redis) (string, error) {
+func handleDel(args []string, redis []*Store) (string, error) {
 	if len(args) != 2 {
 		return "", fmt.Errorf("delete command requires exactly one argument")
 	}
 	key := args[1] //
-	r := currentRedis(redis)
+	r := currentStore(redis)
 	r.Del(key)
 	return "", nil
 }
 
-func handleGetSet(args []string, redis []*Redis) (string, error) {
+func handleGetSet(args []string, redis []*Store) (string, error) {
 	if len(args) < 3 {
 		return "", fmt.Errorf("getset command requires at least two arguments")
 	}
 	key, value := args[1], args[2]
-	r := currentRedis(redis)
+	r := currentStore(redis)
 
 	if item, exist := r.items[key]; exist {
 		if _, ok := item.value.(string); !ok {
@@ -292,12 +304,12 @@ func handleGetSet(args []string, redis []*Redis) (string, error) {
 	return result, nil
 }
 
-func handleIncre(args []string, redis []*Redis) (string, error) {
+func handleIncre(args []string, redis []*Store) (string, error) {
 	if len(args) != 2 {
 		return "", fmt.Errorf("err wrong number of arguments for incr command")
 	}
 	key := args[1]
-	r := currentRedis(redis)
+	r := currentStore(redis)
 
 	if item, exist := r.items[key]; exist {
 		if _, ok := item.value.(string); !ok {
@@ -313,12 +325,12 @@ func handleIncre(args []string, redis []*Redis) (string, error) {
 	return "", nil
 }
 
-func handleIncreBy(args []string, redis []*Redis) (string, error) {
+func handleIncreBy(args []string, redis []*Store) (string, error) {
 	if len(args) < 3 {
 		return "", fmt.Errorf("incrby command requires at least two arguments")
 	}
 	key, value := args[1], args[2]
-	r := currentRedis(redis)
+	r := currentStore(redis)
 
 	if item, exist := r.items[key]; exist {
 		if _, ok := item.value.(string); !ok {
@@ -334,13 +346,55 @@ func handleIncreBy(args []string, redis []*Redis) (string, error) {
 	return "", nil
 }
 
+func handleDecre(args []string, redis []*Store) (string, error) {
+	if len(args) != 2 {
+		return "", fmt.Errorf("err wrong number of arguments for decre command")
+	}
+	key := args[1]
+	r := currentStore(redis)
+
+	if item, exist := r.items[key]; exist {
+		if _, ok := item.value.(string); !ok {
+			// This error describe key existed with another type in this database
+			return "", fmt.Errorf("wrongtype operation against a key holding the wrong kind of value")
+		}
+	}
+
+	err := r.Decre(key)
+	if err != nil {
+		return "", err
+	}
+	return "", nil
+}
+
+func handleDecreBy(args []string, redis []*Store) (string, error) {
+	if len(args) < 3 {
+		return "", fmt.Errorf("decrby command requires at least two arguments")
+	}
+	key, value := args[1], args[2]
+	r := currentStore(redis)
+
+	if item, exist := r.items[key]; exist {
+		if _, ok := item.value.(string); !ok {
+			// This error describe key existed with another type in this database
+			return "", fmt.Errorf("wrongtype operation against a key holding the wrong kind of value")
+		}
+	}
+
+	err := r.DecreBy(key, value)
+	if err != nil {
+		return "", err
+	}
+	return "", nil
+}
+
 // ===============================================================================
-func handleLPush(args []string, redis []*Redis) (string, error) {
+func handleLPush(args []string, redis []*Store) (string, error) {
 	if len(args) < 3 {
 		return "", fmt.Errorf("lpush command requires at least two arguments")
 	}
 	key, value := args[1], args[2]
-	r := currentRedis(redis)
+	r := currentStore(redis)
 
 	if item, exist := r.items[key]; exist {
 		if _, ok := item.value.([]string); !ok {
@@ -356,7 +410,7 @@ func handleLPush(args []string, redis []*Redis) (string, error) {
 	return "", nil
 }
 
-func handleLRange(args []string, redis []*Redis) (string, error) {
+func handleLRange(args []string, redis []*Store) (string, error) {
 	if len(args) < 4 {
 		return "", fmt.Errorf("lrange command requires exactly one argument")
 	}
@@ -373,7 +427,7 @@ func handleLRange(args []string, redis []*Redis) (string, error) {
 		return "", err
 	}
 
-	r := currentRedis(redis)
+	r := currentStore(redis)
 	if item, exist := r.items[key]; exist {
 		if _, ok := item.value.([]string); !ok {
 			// This error describe key existed with another type in this database
@@ -388,12 +442,12 @@ func handleLRange(args []string, redis []*Redis) (string, error) {
 	return result, nil
 }
 
-func handleLPop(args []string, redis []*Redis) (string, error) {
+func handleLPop(args []string, redis []*Store) (string, error) {
 	if len(args) != 2 {
 		return "", fmt.Errorf("lpop command requires exactly one argument")
 	}
 	key := args[1]
-	r := currentRedis(redis)
+	r := currentStore(redis)
 
 	if item, exist := r.items[key]; exist {
 		if _, ok := item.value.([]string); !ok {
