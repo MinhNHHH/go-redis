@@ -2,6 +2,7 @@ package redis
 
 import (
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -30,19 +31,13 @@ func (r *Redis) Get(key string) (string, error) {
 	// Lock so only one goroutine at a time can access the map c.v.
 	defer r.mu.Unlock()
 	if item, exist := r.items[key]; exist {
-		if _, checkType := item.value.(string); checkType {
-			if exist && item.expiration.After(time.Now()) {
-				return item.value.(string), nil
-			} else if item.expiration.IsZero() && exist {
-				return item.value.(string), nil
-			}
-			delete(r.items, key)
-		} else {
-			// This error describe key existed in this database but command get key error
-			return "", fmt.Errorf("wrongtype operation against a key holding the wrong kind of value")
+		if exist && item.expiration.After(time.Now()) {
+			return item.value.(string), nil
+		} else if item.expiration.IsZero() && exist {
+			return item.value.(string), nil
 		}
+		delete(r.items, key)
 	}
-
 	return "", fmt.Errorf("key not found")
 }
 
@@ -51,13 +46,6 @@ func (r *Redis) Set(key, val string, expiration time.Duration) error {
 	r.mu.Lock()
 	// Lock so only one goroutine at a time can access the map c.v.
 	defer r.mu.Unlock()
-	if item, exist := r.items[key]; exist {
-		if _, ok := item.value.(string); !ok {
-			// This error describe key existed in this database but command get key error
-			return fmt.Errorf("wrongtype operation against a key holding the wrong kind of value")
-		}
-	}
-
 	if expiration > 0 {
 		r.items[key] = ExpirationItem{value: val, expiration: time.Now().Add(expiration)}
 	} else {
@@ -70,12 +58,6 @@ func (r *Redis) SetEx(key, val string, expiration time.Duration) error {
 	r.mu.Lock()
 	// Lock so only one goroutine at a time can access the map c.v.
 	defer r.mu.Unlock()
-	if item, exist := r.items[key]; exist {
-		if _, ok := item.value.(string); !ok {
-			// This error describe key existed in this database but command get key error
-			return fmt.Errorf("wrongtype operation against a key holding the wrong kind of value")
-		}
-	}
 	r.items[key] = ExpirationItem{value: val, expiration: time.Now().Add(expiration)}
 	return nil
 }
@@ -88,7 +70,47 @@ func (r *Redis) Del(key string) error {
 	return nil
 }
 
-//--------------------------------------------------------------------------------------------
+func (r *Redis) Incre(key string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if item, exist := r.items[key]; exist {
+		incrNumber, err := strconv.Atoi(item.value.(string))
+		if err != nil {
+			return err
+		}
+		incrNumber += 1
+		value := strconv.Itoa(incrNumber)
+		r.items[key] = ExpirationItem{value: value}
+	} else {
+		r.items[key] = ExpirationItem{value: "1"}
+	}
+	return nil
+}
+
+func (r *Redis) IncreBy(key, value string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if item, exist := r.items[key]; exist {
+		incrNumber, err := strconv.Atoi(item.value.(string))
+		if err != nil {
+			return err
+		}
+		valueIncred, err := strconv.Atoi(value)
+		if err != nil {
+			return err
+		}
+		incrNumber += valueIncred
+		value := strconv.Itoa(incrNumber)
+		r.items[key] = ExpirationItem{value: value}
+	} else {
+		r.items[key] = ExpirationItem{value: value}
+	}
+	return nil
+}
+
+// --------------------------------------------------------------------------------------------
 func (r *Redis) LPush(key, value string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -98,9 +120,6 @@ func (r *Redis) LPush(key, value string) error {
 		if strList, checkType := item.value.([]string); checkType {
 			strList = append(strList, value)
 			r.items[key] = ExpirationItem{value: strList}
-		} else {
-			// This error describe key existed in this database but command get key error
-			return fmt.Errorf("wrongtype operation against a key holding the wrong kind of value")
 		}
 	} else {
 		strList := []string{value}
@@ -129,9 +148,6 @@ func (r *Redis) LRange(key string, start int, stop int) (string, error) {
 			// If len(val) + stop + 1 < 0 => it should be return error.
 			justString := fmt.Sprint(item.value.([]string)[start:stop])
 			return justString, nil
-		} else {
-			// This error describe key existed in this database but command get key error
-			return "", fmt.Errorf("wrongtype operation against a key holding the wrong kind of value")
 		}
 	}
 	return "", fmt.Errorf("key not found")
@@ -149,15 +165,12 @@ func (r *Redis) LPop(key string) (string, error) {
 				r.items[key] = ExpirationItem{value: []string{}}
 			}
 			return element, nil
-		} else {
-			// This error describe key existed in this database but command get key error
-			return "", fmt.Errorf("wrongtype operation against a key holding the wrong kind of value")
 		}
 	}
 	return "", fmt.Errorf("key not found")
 }
 
-//--------------------------------------------------------------------------------------------
+// --------------------------------------------------------------------------------------------
 // UpdateData merges the data from another Redis instance into the current instance.
 // It acquires locks on both the current and new instances to ensure thread safety during the merge operation.
 func (r *Redis) UpdateData(new *Redis) {

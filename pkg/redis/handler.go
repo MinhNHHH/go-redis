@@ -18,6 +18,8 @@ const (
 	getCommand          CommandType = "get"
 	setCommand          CommandType = "set"
 	getSetCommand       CommandType = "getset"
+	increCommand        CommandType = "incr"
+	increByCommand      CommandType = "incrby"
 	deleteCommand       CommandType = "del"
 	strLengthCommand    CommandType = "strlen"
 	setAndExpireCommand CommandType = "setex"
@@ -79,6 +81,16 @@ func (client *Client) handleCommand(command string) {
 			sendBackToClient(client.conn, err.Error())
 		} else {
 			sendBackToClient(client.conn, result)
+		}
+	case increCommand:
+		_, err := handleIncre(args, client.redis)
+		if err != nil {
+			sendBackToClient(client.conn, err.Error())
+		}
+	case increByCommand:
+		_, err := handleIncreBy(args, client.redis)
+		if err != nil {
+			sendBackToClient(client.conn, err.Error())
 		}
 	case lpushCommand:
 		_, err := handleLPush(args, client.redis)
@@ -174,6 +186,14 @@ func handleGet(args []string, redis []*Redis) (string, error) {
 	}
 	key := args[1]
 	r := currentRedis(redis)
+
+	if item, exist := r.items[key]; exist {
+		if _, ok := item.value.(string); !ok {
+			// This error describe key existed with another type in this database
+			return "", fmt.Errorf("wrongtype operation against a key holding the wrong kind of value")
+		}
+	}
+
 	result, err := r.Get(key)
 	if err != nil {
 		return "", err
@@ -188,6 +208,7 @@ func handleSet(args []string, redis []*Redis) (string, error) {
 	key, value := args[1], args[2]
 	r := currentRedis(redis)
 	var ttl int
+
 	if len(args) == 5 && strings.EqualFold(args[3], "ex") {
 		timeToLive, err := strconv.ParseInt(args[4], 10, 64)
 		if err != nil {
@@ -199,6 +220,14 @@ func handleSet(args []string, redis []*Redis) (string, error) {
 	} else {
 		return "", fmt.Errorf("syntax error")
 	}
+
+	if item, exist := r.items[key]; exist {
+		if _, ok := item.value.(string); !ok {
+			// This error describe key existed with another type in this database
+			return "", fmt.Errorf("wrongtype operation against a key holding the wrong kind of value")
+		}
+	}
+
 	err := r.Set(key, value, time.Duration(ttl)*time.Second)
 	if err != nil {
 		return "", fmt.Errorf(err.Error())
@@ -216,6 +245,14 @@ func handleSetEx(args []string, redis []*Redis) (string, error) {
 		return "", fmt.Errorf("invalid expire time in 'setex' command")
 	}
 	r := currentRedis(redis)
+
+	if item, exist := r.items[key]; exist {
+		if _, ok := item.value.(string); !ok {
+			// This error describe key existed with another type in this database
+			return "", fmt.Errorf("wrongtype operation against a key holding the wrong kind of value")
+		}
+	}
+
 	err := r.SetEx(key, value, time.Duration(ttl)*time.Second)
 	if err != nil {
 		return "", err
@@ -239,6 +276,14 @@ func handleGetSet(args []string, redis []*Redis) (string, error) {
 	}
 	key, value := args[1], args[2]
 	r := currentRedis(redis)
+
+	if item, exist := r.items[key]; exist {
+		if _, ok := item.value.(string); !ok {
+			// This error describe key existed with another type in this database
+			return "", fmt.Errorf("wrongtype operation against a key holding the wrong kind of value")
+		}
+	}
+
 	r.Set(key, value, time.Duration(0)*time.Second)
 	result, err := r.Get(key)
 	if err != nil {
@@ -247,12 +292,63 @@ func handleGetSet(args []string, redis []*Redis) (string, error) {
 	return result, nil
 }
 
+func handleIncre(args []string, redis []*Redis) (string, error) {
+	if len(args) != 2 {
+		return "", fmt.Errorf("err wrong number of arguments for incr command")
+	}
+	key := args[1]
+	r := currentRedis(redis)
+
+	if item, exist := r.items[key]; exist {
+		if _, ok := item.value.(string); !ok {
+			// This error describe key existed with another type in this database
+			return "", fmt.Errorf("wrongtype operation against a key holding the wrong kind of value")
+		}
+	}
+
+	err := r.Incre(key)
+	if err != nil {
+		return "", err
+	}
+	return "", nil
+}
+
+func handleIncreBy(args []string, redis []*Redis) (string, error) {
+	if len(args) < 3 {
+		return "", fmt.Errorf("incrby command requires at least two arguments")
+	}
+	key, value := args[1], args[2]
+	r := currentRedis(redis)
+
+	if item, exist := r.items[key]; exist {
+		if _, ok := item.value.(string); !ok {
+			// This error describe key existed with another type in this database
+			return "", fmt.Errorf("wrongtype operation against a key holding the wrong kind of value")
+		}
+	}
+
+	err := r.IncreBy(key, value)
+	if err != nil {
+		return "", err
+	}
+	return "", nil
+}
+
+// ===============================================================================
 func handleLPush(args []string, redis []*Redis) (string, error) {
 	if len(args) < 3 {
 		return "", fmt.Errorf("lpush command requires at least two arguments")
 	}
 	key, value := args[1], args[2]
 	r := currentRedis(redis)
+
+	if item, exist := r.items[key]; exist {
+		if _, ok := item.value.([]string); !ok {
+			// This error describe key existed with another type in this database
+			return "", fmt.Errorf("wrongtype operation against a key holding the wrong kind of value")
+		}
+	}
+
 	err := r.LPush(key, value)
 	if err != nil {
 		return "", err
@@ -278,6 +374,13 @@ func handleLRange(args []string, redis []*Redis) (string, error) {
 	}
 
 	r := currentRedis(redis)
+	if item, exist := r.items[key]; exist {
+		if _, ok := item.value.([]string); !ok {
+			// This error describe key existed with another type in this database
+			return "", fmt.Errorf("wrongtype operation against a key holding the wrong kind of value")
+		}
+	}
+
 	result, err := r.LRange(key, start, stop)
 	if err != nil {
 		return "", err
@@ -291,6 +394,14 @@ func handleLPop(args []string, redis []*Redis) (string, error) {
 	}
 	key := args[1]
 	r := currentRedis(redis)
+
+	if item, exist := r.items[key]; exist {
+		if _, ok := item.value.([]string); !ok {
+			// This error describe key existed with another type in this database
+			return "", fmt.Errorf("wrongtype operation against a key holding the wrong kind of value")
+		}
+	}
+
 	result, err := r.LPop(key)
 	if err != nil {
 		return "", err
