@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type CommandType string
@@ -31,22 +33,23 @@ const (
 )
 
 type Client struct {
-	conn  net.Conn
+	conn  *RedisClient
 	redis []*Store
 }
 
 // HandleClient handles the incoming client connection.
 // It reads commands from the client, processes them, and sends responses back to the client.
-func HandleClient(conn net.Conn, r *Store) {
-	client := &Client{conn: conn, redis: []*Store{r}}
-	defer client.conn.Close()
-
+func HandleClient(conn net.Conn, r *RedisServer) {
+	client := &Client{
+		conn:  &RedisClient{ID: uuid.NewString(), conn: conn},
+		redis: []*Store{r.store}, // Perform a transaction on each Store instance in the slice
+	}
+	r.AddClient(client.conn)
 	scanner := bufio.NewScanner(conn)
-	// Initialize the Store slice with the original Store instance
-	// Perform a transaction on each Store instance in the slice
 	for scanner.Scan() {
 		client.handleCommand(scanner.Text())
 	}
+	defer r.RemoveClient(*client.conn)
 }
 
 func (client *Client) handleCommand(command string) {
@@ -58,96 +61,96 @@ func (client *Client) handleCommand(command string) {
 		result, err := handleGet(args, client.redis)
 
 		if err != nil {
-			sendBackToClient(client.conn, err.Error())
+			sendBackToClient(client.conn.conn, err.Error())
 		} else {
-			sendBackToClient(client.conn, result)
+			sendBackToClient(client.conn.conn, result)
 		}
 	case setCommand:
 		_, err := handleSet(args, client.redis)
 		if err != nil {
-			sendBackToClient(client.conn, err.Error())
+			sendBackToClient(client.conn.conn, err.Error())
 		}
 	case setAndExpireCommand:
 		_, err := handleSetEx(args, client.redis)
 		if err != nil {
-			sendBackToClient(client.conn, err.Error())
+			sendBackToClient(client.conn.conn, err.Error())
 		}
 	case deleteCommand:
 		_, err := handleDel(args, client.redis)
 		if err != nil {
-			sendBackToClient(client.conn, err.Error())
+			sendBackToClient(client.conn.conn, err.Error())
 		}
 	case getSetCommand:
 		result, err := handleGetSet(args, client.redis)
 		if err != nil {
-			sendBackToClient(client.conn, err.Error())
+			sendBackToClient(client.conn.conn, err.Error())
 		} else {
-			sendBackToClient(client.conn, result)
+			sendBackToClient(client.conn.conn, result)
 		}
 	case increCommand:
 		_, err := handleIncre(args, client.redis)
 		if err != nil {
-			sendBackToClient(client.conn, err.Error())
+			sendBackToClient(client.conn.conn, err.Error())
 		}
 	case increByCommand:
 		_, err := handleIncreBy(args, client.redis)
 		if err != nil {
-			sendBackToClient(client.conn, err.Error())
+			sendBackToClient(client.conn.conn, err.Error())
 		}
 	case decrCommand:
 		_, err := handleDecre(args, client.redis)
 		if err != nil {
-			sendBackToClient(client.conn, err.Error())
+			sendBackToClient(client.conn.conn, err.Error())
 		}
 	case decrByCommand:
 		_, err := handleDecreBy(args, client.redis)
 		if err != nil {
-			sendBackToClient(client.conn, err.Error())
+			sendBackToClient(client.conn.conn, err.Error())
 		}
 	case lpushCommand:
 		_, err := handleLPush(args, client.redis)
 		if err != nil {
-			sendBackToClient(client.conn, err.Error())
+			sendBackToClient(client.conn.conn, err.Error())
 		}
 	case lrangeCommand:
 		result, err := handleLRange(args, client.redis)
 		if err != nil {
-			sendBackToClient(client.conn, err.Error())
+			sendBackToClient(client.conn.conn, err.Error())
 		} else {
-			sendBackToClient(client.conn, result)
+			sendBackToClient(client.conn.conn, result)
 		}
 	case lpopCommand:
 		result, err := handleLPop(args, client.redis)
 		if err != nil {
-			sendBackToClient(client.conn, err.Error())
+			sendBackToClient(client.conn.conn, err.Error())
 		} else {
-			sendBackToClient(client.conn, result)
+			sendBackToClient(client.conn.conn, result)
 		}
 
 	case multiCommand:
 		// Multi command: Start a new transaction
 		client.redis = handleMulti(client.redis)
-		sendBackToClient(client.conn, "started transaction")
+		sendBackToClient(client.conn.conn, "started transaction")
 	case execCommand:
 		// Exec command: Commit the changes made during the transaction
 		redis, err := handleExec(client.redis)
 		if err != nil {
-			sendBackToClient(client.conn, err.Error())
+			sendBackToClient(client.conn.conn, err.Error())
 		} else {
 			client.redis = redis
-			sendBackToClient(client.conn, "stoped transaction")
+			sendBackToClient(client.conn.conn, "stoped transaction")
 		}
 	case discardCommand:
 		// Discard command: Revert state the changes made during a transaction to bring the system back to a consistent state.
 		redis, err := handleDiscard(client.redis)
 		if err != nil {
-			sendBackToClient(client.conn, err.Error())
+			sendBackToClient(client.conn.conn, err.Error())
 		} else {
 			client.redis = redis
-			sendBackToClient(client.conn, "discarded transaction")
+			sendBackToClient(client.conn.conn, "discarded transaction")
 		}
 	default:
-		sendBackToClient(client.conn, "unknown command")
+		sendBackToClient(client.conn.conn, "unknown command")
 	}
 }
 
