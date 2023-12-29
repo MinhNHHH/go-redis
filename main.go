@@ -5,6 +5,5 @@ import (
 )
 
 func main() {
-	r := redis.New()
-	redis.Start(r)
+	redis.Start()
 }

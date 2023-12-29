@@ -32,17 +32,19 @@ const (
 	lpopCommand         CommandType = "lpop"
 )
 
-type Client struct {
-	conn  *RedisClient
-	redis []*Store
+type ClientDetail struct {
+	conn      *RedisClient
+	redis     []*Store
+	totalConn int
 }
 
 // HandleClient handles the incoming client connection.
 // It reads commands from the client, processes them, and sends responses back to the client.
 func HandleClient(conn net.Conn, r *RedisServer) {
-	client := &Client{
-		conn:  &RedisClient{ID: uuid.NewString(), conn: conn},
-		redis: []*Store{r.store}, // Perform a transaction on each Store instance in the slice
+	client := &ClientDetail{
+		conn:      &RedisClient{ID: uuid.NewString(), conn: conn},
+		redis:     []*Store{r.store}, // Perform a transaction on each Store instance in the slice,
+		totalConn: len(r.clients),
 	}
 	r.AddClient(client.conn)
 	scanner := bufio.NewScanner(conn)
@@ -52,14 +54,11 @@ func HandleClient(conn net.Conn, r *RedisServer) {
 	defer r.RemoveClient(*client.conn)
 }
 
-func (client *Client) handleCommand(command string) {
-
+func (client *ClientDetail) handleCommand(command string) {
 	args := strings.Split(strings.Trim(command, " "), " ")
-
 	switch CommandType(strings.ToLower(args[0])) {
 	case getCommand:
 		result, err := handleGet(args, client.redis)
-
 		if err != nil {
 			sendBackToClient(client.conn.conn, err.Error())
 		} else {
@@ -126,7 +125,6 @@ func (client *Client) handleCommand(command string) {
 		} else {
 			sendBackToClient(client.conn.conn, result)
 		}
-
 	case multiCommand:
 		// Multi command: Start a new transaction
 		client.redis = handleMulti(client.redis)

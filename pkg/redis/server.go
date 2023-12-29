@@ -42,10 +42,10 @@ func (r *RedisServer) RemoveClient(conn RedisClient) {
 	defer conn.conn.Close()
 }
 
-func Start(r *RedisServer) {
+func Start() {
 	// Listen for incoming connections
 	listener, err := net.Listen("tcp", "localhost:6789")
-
+	r := New()
 	if err != nil {
 		fmt.Println("Error:", err)
 		return
