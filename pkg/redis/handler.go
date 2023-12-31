@@ -228,6 +228,9 @@ func handleSet(args []string, redis []*Store) (string, error) {
 			return "", fmt.Errorf("failed to parse TTL: %v", err)
 		}
 		ttl = int(timeToLive)
+		if ttl < 1 {
+			return "", fmt.Errorf("invalid expire time in 'set' command")
+		}
 	} else if len(args) == 3 {
 		ttl = 0
 	} else {
